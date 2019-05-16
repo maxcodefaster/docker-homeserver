@@ -1,0 +1,145 @@
+﻿version: '3'
+
+services:
+  db:
+    image: mariadb
+    container_name: mariadb
+    command: --transaction-isolation=READ-COMMITTED --binlog-format=ROW
+    restart: always
+    volumes:
+      - /share/CACHEDEV1_DATA/Docker-Volumes/nextcloud/mariadb:/var/lib/mysql
+      - /share/CACHEDEV1_DATA/Docker-Volumes/gitea-data:/data
+    environment:
+      - MYSQL_ROOT_PASSWORD=<<password>>
+    env_file:
+      - db.env
+
+  redis:
+    image: redis
+    container_name: redis
+    restart: always
+
+  app:
+    image: nextcloud:fpm
+    container_name: nextcloud
+    restart: always
+    volumes:
+      - /share/CACHEDEV1_DATA/Docker-Volumes/nextcloud/html:/var/www/html
+    environment:
+      - MYSQL_HOST=db
+    env_file:
+      - db.env
+    depends_on:
+      - db
+      - redis
+
+  gitea-app:
+    image: gitea/gitea
+    container_name: gitea-app
+    restart: always
+    ports:
+      - 1000:22
+      - 5000:3000
+    environment:
+      - VIRTUAL_HOST=git.MYDOMAIN.com
+      - LETSENCRYPT_HOST=git.MYDOMAIN.com
+      - LETSENCRYPT_EMAIL=myemail@email.com
+      - USER_UID=1000
+      - USER_GID=1000
+      - ROOT_URL=https://git.MYDOMAIN.com
+      - DOMAIN=git.MYDOMAIN.com
+      - PROTOCOL=http
+      - VIRTUAL_PORT=3000
+    volumes:
+      - /share/CACHEDEV1_DATA/Docker-Volumes/gitea-data:/data
+    networks:
+      - proxy-tier
+      - default
+    depends_on:
+      - db
+      - redis
+
+  web:
+    build: ./web
+    restart: always
+    volumes:
+      - /share/CACHEDEV1_DATA/Docker-Volumes/nextcloud/html:/var/www/html:ro
+    environment:
+      - VIRTUAL_HOST=cloud.MYDOMAIN.com
+      - VIRTUAL_PORT=6969
+      - LETSENCRYPT_HOST=cloud.MYDOMAIN.com
+      - LETSENCRYPT_EMAIL=myemail@email.com
+    depends_on:
+      - app
+    ports:
+      - 4080:80
+    networks:
+      - proxy-tier
+      - default
+ 
+  collabora:
+    image: collabora/code
+    expose:
+       - 9980
+    cap_add:
+      - MKNOD
+    environment:
+      - domain=cloud.MYDOMAIN.com
+      - VIRTUAL_HOST=office.MYDOMAIN.com
+      - VIRTUAL_PORT=9980
+      - VIRTUAL_PROTO=https
+      - LETSENCRYPT_HOST=office.example.com
+      - LETSENCRYPT_EMAIL=myemail@email.com
+      - username=<<username>>
+      - password=<<password>>
+    networks:
+      - proxy-tier
+    restart: always
+
+  cron:
+    build: ./app
+    restart: always
+    volumes:
+      - /share/CACHEDEV1_DATA/Docker-Volumes/nextcloud/html:/var/www/html
+    entrypoint: /cron.sh
+    depends_on:
+      - db
+      - redis
+
+  proxy:
+    build: ./proxy
+    restart: always
+    ports:
+      - 443:443
+      - 80:80
+    environment:
+      - VIRTUAL_PROTO=https
+      - VIRTUAL_PORT=443
+    labels:
+      com.github.jrcs.letsencrypt_nginx_proxy_companion.nginx_proxy: "true"
+    volumes:
+      - /share/CACHEDEV1_DATA/Docker-Volumes/nextcloud/nginx-certs:/etc/nginx/certs:ro
+      - /share/CACHEDEV1_DATA/Docker-Volumes/nextcloud/nginx-vhost.d:/etc/nginx/vhost.d
+      - /share/CACHEDEV1_DATA/Docker-Volumes/nextcloud/nginx-html:/usr/share/nginx/html
+      - /share/CACHEDEV1_DATA/Docker-Volumes/nextcloud/nginx-conf.d:/etc/nginx/conf.d
+      - /var/run/docker.sock:/tmp/docker.sock:ro
+    networks:
+      - proxy-tier
+
+  letsencrypt-companion:
+    image: jrcs/letsencrypt-nginx-proxy-companion
+    container_name: letsencrypt-companion
+    restart: always
+    volumes:
+      - /share/CACHEDEV1_DATA/Docker-Volumes/nextcloud/nginx-certs:/etc/nginx/certs
+      - /share/CACHEDEV1_DATA/Docker-Volumes/nextcloud/nginx-vhost.d:/etc/nginx/vhost.d
+      - /share/CACHEDEV1_DATA/Docker-Volumes/nextcloud/nginx-html:/usr/share/nginx/html
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - proxy-tier
+    depends_on:
+      - proxy
+      
+networks:
+  proxy-tier:
+
